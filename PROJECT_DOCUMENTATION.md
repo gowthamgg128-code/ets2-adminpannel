@@ -2,7 +2,7 @@
 
 This repository contains a small **React + Vite** admin panel UI for an “ETS2 Paid Mod Distribution” workflow.
 
-It is currently a **front-end only** app with **mock data** and **placeholder authentication** (localStorage flag). There is **no backend/API integration** in this repo yet.
+It integrates with a backend API for auth-protected admin operations and uses a metadata-only mod upload flow. Binary mod files are uploaded directly from the browser to presigned object storage, then the frontend submits metadata to the backend.
 
 ## 1) Tech Stack
 
@@ -202,13 +202,17 @@ All “business data” in these pages is currently mocked in the component file
 
 Contains two sections:
 
-1) **Upload Mod** (placeholder)
-   - Inputs: name, version, description, file input (`.zip`/`.scs`)
-   - On submit: shows an `alert(...)` and clears local form state
-   - No upload API integration yet
+1) **Upload Mod**
+   - Inputs: name, version, description, encrypted file input (`.enc`)
+   - Validates required fields, `.enc` file type, and 2GB max size
+   - Requests a presigned upload target from the backend
+   - Uploads the file directly from the browser to object storage
+   - Calculates a chunked SHA-256 checksum client-side
+   - Submits metadata only to `/admin/upload-mod`
+   - Shows staged progress: prepare, upload, checksum, save
 
 2) **Mods Table**
-   - Renders a table from `mockMods` array
+   - Renders a table from backend `/mods` data
    - Shows status “Active/Inactive” badges using theme tokens
 
 ### Requests
@@ -312,13 +316,53 @@ npm test
 2) Add a `<Route />` inside the `AdminLayout` route group in `src/App.tsx`.
 3) Add a new item in `src/components/AdminSidebar.tsx` so it shows in navigation.
 
-### Hook up real data
+### Mod upload backend contract
 
-The UI is structured so you can replace mock arrays/state with API calls. A typical next step is:
+`POST /admin/mod-upload-target`
 
-- create an API layer (fetch/axios)
-- use React Query (`useQuery`, `useMutation`) per page
-- replace the placeholder auth with token-based auth
+```json
+{
+  "filename": "realistic_physics_v1.enc",
+  "size": 123456789,
+  "content_type": "application/octet-stream"
+}
+```
+
+Expected response:
+
+```json
+{
+  "upload_url": "https://storage.example.com/presigned-put-url",
+  "file_url": "https://cdn.example.com/mods/realistic_physics_v1.enc",
+  "storage_key": "mods/realistic_physics_v1.enc",
+  "method": "PUT",
+  "headers": {
+    "x-ms-blob-type": "BlockBlob"
+  }
+}
+```
+
+`POST /admin/upload-mod`
+
+```json
+{
+  "name": "Realistic Physics",
+  "version": "1.0.0",
+  "description": "Encrypted release build",
+  "file_url": "https://cdn.example.com/mods/realistic_physics_v1.enc",
+  "size": 123456789,
+  "checksum": "sha256hex...",
+  "storage_key": "mods/realistic_physics_v1.enc",
+  "mime_type": "application/octet-stream",
+  "original_filename": "realistic_physics_v1.enc"
+}
+```
+
+The backend must store metadata only. Binary mod files must not be sent to `/admin/upload-mod`.
+
+### Security note
+
+Do not use `VITE_` environment variables for long-lived storage or repository credentials. Browser builds expose them publicly. GitHub Releases is not suitable for secure production browser-direct uploads because it does not provide true presigned upload URLs.
 
 ## 14) Deployment
 

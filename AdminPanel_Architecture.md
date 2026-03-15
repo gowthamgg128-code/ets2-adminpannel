@@ -173,13 +173,17 @@ const generateKeyMutation = useMutation({
 **Component**: `src/pages/Mods.tsx`
 
 **Functionality**:
-- Upload new mod files to the system
+- Register new encrypted mod builds in the system
 - Multi-field form with validation:
   - Mod Name (text input)
   - Version (text input, e.g., "1.0.0")
   - Description (textarea)
-  - File upload (.zip or .scs formats)
+  - File upload (`.enc` format only)
 - Form validation ensures all fields are filled
+- Requests a presigned upload target from the backend
+- Uploads the encrypted file directly to object storage
+- Calculates a chunked SHA-256 checksum in the browser
+- Sends metadata only to the backend after the upload succeeds
 - Toast notifications for success/failure
 - Automatic form reset after successful upload
 
@@ -189,30 +193,18 @@ const generateKeyMutation = useMutation({
   name: string;        // Mod display name
   version: string;     // Version number
   description: string; // Mod description
-  file: File;          // Binary mod file
+  file: File;          // Encrypted .enc file
 }
 ```
 
-**Upload Handler**:
-```typescript
-const formData = new FormData();
-formData.append("name", modName);
-formData.append("version", version);
-formData.append("description", description);
-formData.append("file", file);
-
-await api.post("/admin/upload-mod", formData, {
-  headers: { "Content-Type": "multipart/form-data" },
-});
-```
-
 **File Type Validation**:
-- Accepted formats: `.zip`, `.scs`
-- Frontend validation via `accept` attribute
+- Accepted format: `.enc`
+- Frontend validates extension and a 2GB max size
 - Backend should perform additional validation
 
-**API Endpoint**:
-- `POST /admin/upload-mod` (multipart/form-data)
+**API Endpoints**:
+- `POST /admin/mod-upload-target`
+- `POST /admin/upload-mod` (JSON metadata only)
 
 ### 2.5 Edit Mod
 **Route**: `/mods`  
@@ -288,30 +280,50 @@ await api.post("/admin/upload-mod", formData, {
 
 1. **Form Input Collection**:
    - Admin fills out form fields (name, version, description)
-   - Admin selects file using HTML file input with `accept=".zip,.scs"`
+   - Admin selects file using HTML file input with `accept=".enc"`
    - File object stored in component state: `const [file, setFile] = useState<File | null>(null)`
 
 2. **Frontend Validation**:
    - Checks all fields are non-empty: `!modName.trim() || !version.trim() || !description.trim() || !file`
+   - Verifies file extension is `.enc`
+   - Verifies file size is <= 2GB
    - Shows error toast if validation fails
    - Prevents submission if validation fails
 
-3. **FormData Construction**:
+3. **Upload Target Request**:
    ```typescript
-   const formData = new FormData();
-   formData.append("name", modName);
-   formData.append("version", version);
-   formData.append("description", description);
-   formData.append("file", file);
+   const target = await api.post("/admin/mod-upload-target", {
+     filename: file.name,
+     size: file.size,
+     content_type: file.type || "application/octet-stream",
+   });
    ```
 
-4. **HTTP Request**:
-   - Method: `POST`
-   - Content-Type: `multipart/form-data` (automatically set by browser)
-   - Authorization header added via Axios interceptor
-   - Request sent to `/admin/upload-mod`
+4. **Direct Binary Upload**:
+   - Browser uploads the file directly to presigned object storage
+   - Backend is not in the binary data path
+   - Upload progress is shown in the UI
 
-5. **Response Handling**:
+5. **Checksum Calculation**:
+   - Browser computes a chunked SHA-256 checksum
+   - Implementation avoids `file.arrayBuffer()` on the full file
+
+6. **Metadata Submission**:
+   ```typescript
+   await api.post("/admin/upload-mod", {
+     name: modName,
+     version,
+     description,
+     file_url: target.file_url,
+     size: file.size,
+     checksum,
+     storage_key: target.storage_key,
+     mime_type: file.type || "application/octet-stream",
+     original_filename: file.name,
+   });
+   ```
+
+7. **Response Handling**:
    - **Success**: 
      - Toast notification: "Upload complete"
      - Invalidates `["mods"]` query to refresh mod list
@@ -324,10 +336,16 @@ await api.post("/admin/upload-mod", formData, {
 ```typescript
 const uploadMutation = useMutation({
   mutationFn: async () => {
-    const formData = new FormData();
-    // ... append fields
-    return await api.post("/admin/upload-mod", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
+    const target = await api.post("/admin/mod-upload-target", { ... });
+    await axios.put(target.upload_url, file, { onUploadProgress });
+    const checksum = await calculateFileSha256(file);
+    return await api.post("/admin/upload-mod", {
+      name,
+      version,
+      description,
+      file_url: target.file_url,
+      size: file.size,
+      checksum,
     });
   },
   onSuccess: () => {
@@ -344,13 +362,13 @@ const uploadMutation = useMutation({
 ### 3.2 File Size Limit
 
 **Current Implementation**: 
-- **No explicit file size limit enforced on frontend**
-- Browser may have implicit limits (typically 2GB for most browsers)
+- Frontend enforces a 2GB max size before the upload starts
+- Browser and storage service limits still apply
 
 **Backend Responsibility**:
-- Backend server should implement file size restrictions
-- Common limits for mod files: 50MB - 500MB
-- Should return appropriate error response if file exceeds limit
+- Backend should enforce max size when issuing presigned upload targets
+- Storage service should reject oversized uploads
+- Backend should refuse metadata registration for unexpected object sizes
 
 **Recommended Implementation**:
 ```typescript
@@ -365,29 +383,51 @@ if (file.size > 100 * 1024 * 1024) { // 100MB
 }
 ```
 
-**Upload Progress** (Not Currently Implemented):
-- Could add progress bar using Axios `onUploadProgress` callback
-- Would improve UX for large file uploads
+**Upload Progress**:
+- Implemented with Axios `onUploadProgress` for the direct storage upload
+- UI also shows checksum and metadata-save stages for long-running uploads
 
 ### 3.3 Where File is Sent (Backend Endpoint)
 
-**Endpoint**: `POST /admin/upload-mod`
+**Binary Upload Endpoint**: Presigned object storage URL returned by `POST /admin/mod-upload-target`
 
-**Full URL**: `http://localhost:8000/admin/upload-mod`
+**Metadata Endpoint**: `POST /admin/upload-mod`
 
-**Request Format**:
-- **Method**: POST
-- **Content-Type**: `multipart/form-data`
-- **Headers**: 
-  - `Authorization: Bearer <token>`
-  - `Content-Type: multipart/form-data` (set automatically)
-
-**Request Body** (FormData):
+**Upload Target Request**:
+```json
+{
+  "filename": "realistic_physics_v1.enc",
+  "size": 123456789,
+  "content_type": "application/octet-stream"
+}
 ```
-name: string
-version: string
-description: string
-file: binary (File object)
+
+**Upload Target Response**:
+```json
+{
+  "upload_url": "https://storage.example.com/presigned-put-url",
+  "file_url": "https://cdn.example.com/mods/realistic_physics_v1.enc",
+  "storage_key": "mods/realistic_physics_v1.enc",
+  "method": "PUT",
+  "headers": {
+    "x-ms-blob-type": "BlockBlob"
+  }
+}
+```
+
+**Metadata Request**:
+```json
+{
+  "name": "Realistic Physics",
+  "version": "1.0.0",
+  "description": "Encrypted release build",
+  "file_url": "https://cdn.example.com/mods/realistic_physics_v1.enc",
+  "size": 123456789,
+  "checksum": "sha256hex...",
+  "storage_key": "mods/realistic_physics_v1.enc",
+  "mime_type": "application/octet-stream",
+  "original_filename": "realistic_physics_v1.enc"
+}
 ```
 
 **Expected Response** (Success):
@@ -411,13 +451,12 @@ file: binary (File object)
 
 **Backend Processing** (Expected):
 1. Validate authentication token
-2. Validate file type (must be .zip or .scs)
-3. Validate file size
-4. Scan file for malware (recommended)
-5. Generate unique file identifier
-6. Store file in object storage or filesystem
-7. Create database record for mod
-8. Return mod details
+2. Validate metadata request for upload target creation
+3. Generate a presigned object storage upload URL
+4. Browser uploads the binary file directly to storage
+5. Validate metadata submission and uploaded object details
+6. Create database record for mod
+7. Return mod details
 
 ---
 
@@ -1028,20 +1067,45 @@ Response: {
 | Method | Endpoint | Auth Required | Description |
 |--------|----------|---------------|-------------|
 | GET | `/mods` | ✅ | List all mods with details |
-| POST | `/admin/upload-mod` | ✅ | Upload new mod file with metadata |
+| POST | `/admin/mod-upload-target` | ✅ | Create a presigned binary upload target |
+| POST | `/admin/upload-mod` | ✅ | Store mod metadata only |
 
 **Upload Mod Request**:
 ```typescript
-POST /admin/upload-mod
-Content-Type: multipart/form-data
+POST /admin/mod-upload-target
 Headers: {
   Authorization: Bearer <token>
 }
-Body (FormData): {
+Body: {
+  filename: string;
+  size: number;
+  content_type: string;
+}
+Response: {
+  upload_url: string;
+  file_url: string;
+  storage_key?: string;
+  method?: "PUT" | "POST";
+  headers?: Record<string, string>;
+  fields?: Record<string, string>;
+}
+```
+
+```typescript
+POST /admin/upload-mod
+Headers: {
+  Authorization: Bearer <token>
+}
+Body: {
   name: string;
   version: string;
   description: string;
-  file: File;  // .zip or .scs
+  file_url: string;
+  size: number;
+  checksum: string;
+  storage_key?: string;
+  mime_type: string;
+  original_filename: string;
 }
 Response: {
   id: string;
@@ -1112,7 +1176,7 @@ Response: Array<{
 3. ✅ **TanStack React Query** for efficient server state management
 4. ✅ **Component-based architecture** with shadcn/ui for consistency
 5. ✅ **Token-based auto-logout** via Axios interceptors
-6. ✅ **File upload via FormData** with multipart/form-data encoding
+6. ✅ **Metadata-only upload registration** after direct browser-to-storage upload
 7. ✅ **Server-side key generation** for security
 8. ✅ **PC ID binding** for license enforcement
 
@@ -1124,6 +1188,7 @@ Response: Array<{
 - ✅ Server-side key generation (frontend cannot forge keys)
 - ⚠️ Token stored in localStorage (consider httpOnly cookies for production)
 - ⚠️ No RBAC implemented yet (all admins have full access)
+- ⚠️ Never expose long-lived repository or storage credentials in `VITE_` variables
 
 **Performance Optimizations**:
 
@@ -1138,6 +1203,7 @@ Response: Array<{
 - 🔜 Mod editing and deletion
 - 🔜 License revocation UI
 - 🔜 File upload progress indicators
+- 🔜 GitHub Releases fallback for non-production use only, if ever required
 - 🔜 Expiration date management
 - 🔜 Admin audit logs
 - 🔜 Bulk operations (batch key generation)
