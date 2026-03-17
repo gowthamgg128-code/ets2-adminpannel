@@ -17,13 +17,9 @@ export default function AuthorizedUsers() {
   }, []);
 
   const addUser = async () => {
-    const res = await fetch(`${API}/admin/add-user`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ phone }),
-    });
+    const res = await fetch(`${API}/admin/add-user?phone=${phone}`, {
+      method: "POST"
+  });
 
     const data = await res.json();
 
