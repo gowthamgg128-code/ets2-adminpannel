@@ -1,11 +1,13 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { LayoutDashboard, Package, FileText, Key } from "lucide-react";
+import { LayoutDashboard, Package, FileText, Key, Users } from "lucide-react";
 
 const navItems = [
   { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
   { label: "Mods", path: "/mods", icon: Package },
   { label: "Requests", path: "/requests", icon: FileText },
   { label: "Licenses", path: "/licenses", icon: Key },
+  { label: "Authorized Users", path: "/authorized-users", icon: Users },
 ];
 
 const AdminSidebar = () => {
