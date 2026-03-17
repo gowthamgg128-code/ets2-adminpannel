@@ -11,6 +11,7 @@ import Mods from "@/pages/Mods";
 import Requests from "@/pages/Requests";
 import Licenses from "@/pages/Licenses";
 import NotFound from "@/pages/NotFound";
+import AuthorizedUsers from "@/pages/AuthorizedUsers";
 
 const queryClient = new QueryClient();
 
@@ -28,6 +29,7 @@ const App = () => (
               <Route path="/mods" element={<Mods />} />
               <Route path="/requests" element={<Requests />} />
               <Route path="/licenses" element={<Licenses />} />
+              <Route path="/authorized-users" element={<AuthorizedUsers />} />
             </Route>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<NotFound />} />
