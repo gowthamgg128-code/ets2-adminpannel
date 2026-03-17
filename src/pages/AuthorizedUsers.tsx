@@ -1,12 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 
 const API = import.meta.env.VITE_API_URL;
 
 export default function AuthorizedUsers() {
-
   const [phone, setPhone] = useState("");
-  const [users, setUsers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState([]);
 
   const fetchUsers = async () => {
     const res = await fetch(`${API}/admin/users`);
@@ -19,22 +17,15 @@ export default function AuthorizedUsers() {
   }, []);
 
   const addUser = async () => {
-
-    if (!phone) return alert("Enter phone number");
-
-    setLoading(true);
-
     const res = await fetch(`${API}/admin/add-user`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify({ phone })
+      body: JSON.stringify({ phone }),
     });
 
     const data = await res.json();
-
-    setLoading(false);
 
     if (data.success) {
       setPhone("");
@@ -45,53 +36,46 @@ export default function AuthorizedUsers() {
   };
 
   return (
-    <div className="page-container">
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">Authorized Users</h1>
 
-      <h2>Authorized Users</h2>
-
-      <div className="card">
-
+      <div className="bg-white rounded-lg p-4 shadow flex gap-3">
         <input
-          type="text"
-          placeholder="Enter phone number"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
+          placeholder="Enter phone number"
+          className="border p-2 rounded w-64"
         />
 
-        <button onClick={addUser} disabled={loading}>
-          {loading ? "Adding..." : "Add User"}
+        <button
+          onClick={addUser}
+          className="bg-blue-600 text-white px-4 py-2 rounded"
+        >
+          Add User
         </button>
-
       </div>
 
-      <div className="card">
-
-        <h3>Authorized Users List</h3>
-
-        <table>
-
+      <div className="bg-white rounded-lg p-4 shadow">
+        <table className="w-full">
           <thead>
-            <tr>
-              <th>Phone</th>
-              <th>Created</th>
+            <tr className="border-b">
+              <th className="text-left p-2">Phone</th>
+              <th className="text-left p-2">Created</th>
             </tr>
           </thead>
 
           <tbody>
-
-            {users.map((user) => (
-              <tr key={user.id}>
-                <td>{user.phone}</td>
-                <td>{new Date(user.created_at).toLocaleString()}</td>
+            {users.map((u: any) => (
+              <tr key={u.id} className="border-b">
+                <td className="p-2">{u.phone}</td>
+                <td className="p-2">
+                  {new Date(u.created_at).toLocaleString()}
+                </td>
               </tr>
             ))}
-
           </tbody>
-
         </table>
-
       </div>
-
     </div>
   );
 }
