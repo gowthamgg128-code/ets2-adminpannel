@@ -1,77 +1,124 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import api from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { toast } from "@/components/ui/use-toast";
 
-const API = import.meta.env.VITE_API_URL;
+type User = {
+  id: string;
+  phone: string;
+  created_at: string;
+};
 
-export default function AuthorizedUsers() {
+const AuthorizedUsers = () => {
   const [phone, setPhone] = useState("");
-  const [users, setUsers] = useState([]);
+  const queryClient = useQueryClient();
 
-  const fetchUsers = async () => {
-    const res = await fetch(`${API}/admin/users`);
-    const data = await res.json();
-    setUsers(data);
-  };
+  /* ---------------- GET USERS ---------------- */
 
-  useEffect(() => {
-    fetchUsers();
-  }, []);
-
-  const addUser = async () => {
-    const res = await fetch(`${API}/admin/add-user?phone=${phone}`, {
-      method: "POST"
+  const usersQuery = useQuery({
+    queryKey: ["authorized-users"],
+    queryFn: async () => {
+      const res = await api.get<User[]>("/admin/users");
+      return res.data;
+    },
   });
 
-    const data = await res.json();
+  /* ---------------- ADD USER ---------------- */
 
-    if (data.success) {
+  const addUserMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post(`/admin/add-user?phone=${phone}`);
+      return res.data;
+    },
+
+    onSuccess: () => {
+      toast({
+        title: "User added",
+        description: "Phone authorized successfully",
+      });
+
       setPhone("");
-      fetchUsers();
+      queryClient.invalidateQueries({ queryKey: ["authorized-users"] });
+    },
+
+    onError: () => {
+      toast({
+        title: "Failed to add user",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleAddUser = () => {
+    if (!phone.trim()) {
+      toast({
+        title: "Enter phone number",
+        variant: "destructive",
+      });
+      return;
     }
 
-    alert(data.message);
+    addUserMutation.mutate();
   };
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Authorized Users</h1>
 
+      {/* ADD USER */}
       <div className="bg-white rounded-lg p-4 shadow flex gap-3">
-        <input
+        <Input
+          placeholder="Enter phone number"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          placeholder="Enter phone number"
-          className="border p-2 rounded w-64"
+          className="w-64"
         />
 
-        <button
-          onClick={addUser}
-          className="bg-blue-600 text-white px-4 py-2 rounded"
-        >
-          Add User
-        </button>
+        <Button onClick={handleAddUser} disabled={addUserMutation.isPending}>
+          {addUserMutation.isPending ? "Adding..." : "Add User"}
+        </Button>
       </div>
 
+      {/* USER TABLE */}
       <div className="bg-white rounded-lg p-4 shadow">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b">
-              <th className="text-left p-2">Phone</th>
-              <th className="text-left p-2">Created</th>
-            </tr>
-          </thead>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Phone</TableHead>
+              <TableHead>Created</TableHead>
+            </TableRow>
+          </TableHeader>
 
-          <tbody>
-            {users.map((u: any) => (
-              <tr key={u.id} className="border-b">
-                <td className="p-2">{u.phone}</td>
-                <td className="p-2">
-                  {new Date(u.created_at).toLocaleString()}
-                </td>
-              </tr>
+          <TableBody>
+            {usersQuery.data?.map((user) => (
+              <TableRow key={user.id}>
+                <TableCell>{user.phone}</TableCell>
+                <TableCell>
+                  {new Date(user.created_at).toLocaleString()}
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+
+            {usersQuery.isLoading && (
+              <TableRow>
+                <TableCell colSpan={2}>Loading...</TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
-}
+};
+
+export default AuthorizedUsers;
