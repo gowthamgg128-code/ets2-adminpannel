@@ -16,11 +16,13 @@ import { toast } from "@/components/ui/use-toast";
 type User = {
   id: string;
   phone: string;
+  name: string; // ✅ added
   created_at: string;
 };
 
 const AuthorizedUsers = () => {
   const [phone, setPhone] = useState("");
+  const [name, setName] = useState(""); // ✅ added
   const queryClient = useQueryClient();
 
   /* ---------------- GET USERS ---------------- */
@@ -37,7 +39,9 @@ const AuthorizedUsers = () => {
 
   const addUserMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post(`/admin/add-user?phone=${phone}`);
+      const res = await api.post(
+        `/admin/add-user?phone=${phone}&name=${name}` // ✅ updated
+      );
       return res.data;
     },
 
@@ -48,6 +52,7 @@ const AuthorizedUsers = () => {
       });
 
       setPhone("");
+      setName(""); // ✅ reset name
       queryClient.invalidateQueries({ queryKey: ["authorized-users"] });
     },
 
@@ -77,6 +82,16 @@ const AuthorizedUsers = () => {
 
       {/* ADD USER */}
       <div className="bg-white rounded-lg p-4 shadow flex gap-3">
+        
+        {/* NAME INPUT */}
+        <Input
+          placeholder="Enter name (optional)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-64"
+        />
+
+        {/* PHONE INPUT */}
         <Input
           placeholder="Enter phone number"
           value={phone}
@@ -94,6 +109,7 @@ const AuthorizedUsers = () => {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Name</TableHead> {/* ✅ added */}
               <TableHead>Phone</TableHead>
               <TableHead>Created</TableHead>
             </TableRow>
@@ -102,6 +118,7 @@ const AuthorizedUsers = () => {
           <TableBody>
             {usersQuery.data?.map((user) => (
               <TableRow key={user.id}>
+                <TableCell>{user.name || "-"}</TableCell> {/* ✅ added */}
                 <TableCell>{user.phone}</TableCell>
                 <TableCell>
                   {new Date(user.created_at).toLocaleString()}
@@ -111,7 +128,7 @@ const AuthorizedUsers = () => {
 
             {usersQuery.isLoading && (
               <TableRow>
-                <TableCell colSpan={2}>Loading...</TableCell>
+                <TableCell colSpan={3}>Loading...</TableCell> {/* ✅ updated */}
               </TableRow>
             )}
           </TableBody>
