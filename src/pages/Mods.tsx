@@ -49,13 +49,6 @@ type UploadMetadataPayload = {
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
 const ENCRYPTED_MIME_TYPE = "application/octet-stream";
 
-const stageLabels: Record<Exclude<UploadStage, "idle">, string> = {
-  preparing: "Preparing upload",
-  uploading: "Uploading file",
-  checksum: "Calculating checksum",
-  saving: "Saving metadata",
-};
-
 const StatusBadge = ({ status }: { status: "Active" | "Inactive" }) => (
   <span
     className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
@@ -68,95 +61,8 @@ const StatusBadge = ({ status }: { status: "Active" | "Inactive" }) => (
   </span>
 );
 
-const isEncFile = (selectedFile: File) =>
-  selectedFile.name.toLowerCase().endsWith(".enc");
-
-const formatFileSize = (bytes: number) => {
-  if (bytes < 1024) return `${bytes} B`;
-
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIndex = -1;
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
-};
-
-const validateUpload = ({
-  modName,
-  version,
-  description,
-  file,
-}: {
-  modName: string;
-  version: string;
-  description: string;
-  file: File | null;
-}) => {
-  if (!modName.trim() || !version.trim() || !description.trim() || !file) {
-    return {
-      title: "Missing fields",
-      description: "Please fill all fields and attach an encrypted .enc file.",
-    };
-  }
-
-  if (!isEncFile(file)) {
-    return {
-      title: "Invalid file type",
-      description: "Only encrypted .enc files can be uploaded.",
-    };
-  }
-
-  if (file.size > MAX_FILE_SIZE_BYTES) {
-    return {
-      title: "File exceeds 2GB limit",
-      description: "Choose an encrypted file smaller than 2GB.",
-    };
-  }
-
-  return null;
-};
-
-const uploadFileToStorage = async (
-  target: UploadTargetResponse,
-  file: File,
-  onProgress: (percent: number) => void,
-) => {
-  const method = target.method ?? "PUT";
-  const signedHeaders = target.headers ?? {};
-
-  if (method === "POST") {
-    const formData = new FormData();
-    Object.entries(target.fields ?? {}).forEach(([key, value]) => {
-      formData.append(key, value);
-    });
-    formData.append("file", file);
-
-    await axios.post(target.upload_url, formData, {
-      headers: signedHeaders,
-      onUploadProgress: (event) => {
-        if (!event.total) return;
-        onProgress(Math.round((event.loaded / event.total) * 100));
-      },
-    });
-    return;
-  }
-
-  await axios.put(target.upload_url, file, {
-    headers: {
-      ...signedHeaders,
-      "Content-Type": "application/octet-stream",
-    },
-    onUploadProgress: (event) => {
-      if (!event.total) return;
-      onProgress(Math.round((event.loaded / event.total) * 100));
-    },
-  });
-};
+const isEncFile = (file: File) =>
+  file.name.toLowerCase().endsWith(".enc");
 
 const Mods = () => {
   const [modName, setModName] = useState("");
@@ -164,17 +70,19 @@ const Mods = () => {
   const [description, setDescription] = useState("");
   const [imageUrl, setImageUrl] = useState(""); // ✅ NEW
   const [file, setFile] = useState<File | null>(null);
+
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const queryClient = useQueryClient();
 
+  // ✅ FETCH MODS
   const modsQuery = useQuery({
     queryKey: ["mods"],
     queryFn: async () => {
-      const response = await api.get<ModItem[]>("/mods");
-      return response.data;
+      const res = await api.get<ModItem[]>("/mods");
+      return res.data;
     },
   });
 
@@ -186,6 +94,7 @@ const Mods = () => {
     setFile(null);
     setUploadStage("idle");
     setUploadProgress(0);
+
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -201,7 +110,13 @@ const Mods = () => {
         })
       ).data;
 
-      await uploadFileToStorage(target, file, setUploadProgress);
+      await axios.put(target.upload_url, file, {
+        headers: { "Content-Type": "application/octet-stream" },
+        onUploadProgress: (e) => {
+          if (!e.total) return;
+          setUploadProgress(Math.round((e.loaded / e.total) * 100));
+        },
+      });
 
       const checksum = await calculateFileSha256(file, setUploadProgress);
 
@@ -222,7 +137,7 @@ const Mods = () => {
     },
 
     onSuccess: () => {
-      toast({ title: "Upload complete", description: "Mod uploaded successfully." });
+      toast({ title: "Upload complete" });
       queryClient.invalidateQueries({ queryKey: ["mods"] });
       resetForm();
     },
@@ -230,27 +145,25 @@ const Mods = () => {
     onError: () => {
       toast({
         title: "Upload failed",
-        description: "Please try again.",
         variant: "destructive",
       });
-      setUploadStage("idle");
     },
   });
 
-  const handleUpload = (event: FormEvent) => {
-    event.preventDefault();
+  const handleUpload = (e: FormEvent) => {
+    e.preventDefault();
 
-    const validationError = validateUpload({
-      modName,
-      version,
-      description,
-      file,
-    });
-
-    if (validationError) {
+    if (!modName || !version || !description || !file) {
       toast({
-        title: validationError.title,
-        description: validationError.description,
+        title: "Fill all fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!isEncFile(file)) {
+      toast({
+        title: "Only .enc file allowed",
         variant: "destructive",
       });
       return;
@@ -259,17 +172,29 @@ const Mods = () => {
     uploadMutation.mutate();
   };
 
+  const mods = modsQuery.data ?? [];
+
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-6">Mods</h1>
 
-      <div className="bg-card rounded-lg border p-6 mb-8">
-        <h2 className="text-base font-medium mb-4">Upload Mod</h2>
+      {/* ✅ UPLOAD FORM */}
+      <div className="bg-card border rounded-lg p-6 mb-8">
+        <form
+          onSubmit={handleUpload}
+          className="grid grid-cols-1 md:grid-cols-2 gap-4"
+        >
+          <Input
+            placeholder="Mod Name"
+            value={modName}
+            onChange={(e) => setModName(e.target.value)}
+          />
 
-        <form onSubmit={handleUpload} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
-          <Input placeholder="Mod Name" value={modName} onChange={(e) => setModName(e.target.value)} />
-          <Input placeholder="Version" value={version} onChange={(e) => setVersion(e.target.value)} />
+          <Input
+            placeholder="Version"
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+          />
 
           <Textarea
             placeholder="Description"
@@ -278,7 +203,7 @@ const Mods = () => {
             className="md:col-span-2"
           />
 
-          {/* ✅ NEW FIELD */}
+          {/* ✅ IMAGE URL FIELD */}
           <Input
             placeholder="Image URL"
             value={imageUrl}
@@ -286,48 +211,65 @@ const Mods = () => {
             className="md:col-span-2"
           />
 
-          <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          <Input
+            type="file"
+            ref={fileInputRef}
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="md:col-span-2"
+          />
 
           <Button type="submit">
             {uploadMutation.isPending ? "Uploading..." : "Upload Mod"}
           </Button>
-
         </form>
+      </div>
+
+      {/* ✅ MOD LIST TABLE */}
+      <div className="bg-card border rounded-lg">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Mod Name</TableHead>
+              <TableHead>Version</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Created At</TableHead>
+            </TableRow>
+          </TableHeader>
+
+          <TableBody>
+            {mods.map((mod: any) => (
+              <TableRow key={mod.id}>
+                <TableCell>{mod.name}</TableCell>
+                <TableCell>{mod.version}</TableCell>
+                <TableCell>
+                  <StatusBadge
+                    status={mod.status || (mod.is_active ? "Active" : "Inactive")}
+                  />
+                </TableCell>
+                <TableCell>{mod.created_at || "-"}</TableCell>
+              </TableRow>
+            ))}
+
+            {modsQuery.isLoading && (
+              <TableRow>
+                <TableCell colSpan={4} className="text-center">
+                  Loading...
+                </TableCell>
+              </TableRow>
+            )}
+
+            {!modsQuery.isLoading && mods.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={4} className="text-center">
+                  No mods found
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
 };
-<div className="bg-card rounded-lg border border-border mt-6">
-  <Table>
-    <TableHeader>
-      <TableRow>
-        <TableHead>Mod Name</TableHead>
-        <TableHead>Version</TableHead>
-        <TableHead>Status</TableHead>
-        <TableHead>Created At</TableHead>
-      </TableRow>
-    </TableHeader>
 
-    <TableBody>
-      {modsQuery.data?.map((mod: any) => (
-        <TableRow key={mod.id}>
-          <TableCell>{mod.name}</TableCell>
-          <TableCell>{mod.version}</TableCell>
-          <TableCell>
-            <StatusBadge status={mod.status || "Inactive"} />
-          </TableCell>
-          <TableCell>{mod.created_at || "-"}</TableCell>
-        </TableRow>
-      ))}
-
-      {modsQuery.isLoading && (
-        <TableRow>
-          <TableCell colSpan={4} className="text-center">
-            Loading...
-          </TableCell>
-        </TableRow>
-      )}
-    </TableBody>
-  </Table>
-</div>
 export default Mods;
