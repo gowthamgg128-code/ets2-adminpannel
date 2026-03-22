@@ -297,5 +297,37 @@ const Mods = () => {
     </div>
   );
 };
+<div className="bg-card rounded-lg border border-border mt-6">
+  <Table>
+    <TableHeader>
+      <TableRow>
+        <TableHead>Mod Name</TableHead>
+        <TableHead>Version</TableHead>
+        <TableHead>Status</TableHead>
+        <TableHead>Created At</TableHead>
+      </TableRow>
+    </TableHeader>
 
+    <TableBody>
+      {modsQuery.data?.map((mod: any) => (
+        <TableRow key={mod.id}>
+          <TableCell>{mod.name}</TableCell>
+          <TableCell>{mod.version}</TableCell>
+          <TableCell>
+            <StatusBadge status={mod.status || "Inactive"} />
+          </TableCell>
+          <TableCell>{mod.created_at || "-"}</TableCell>
+        </TableRow>
+      ))}
+
+      {modsQuery.isLoading && (
+        <TableRow>
+          <TableCell colSpan={4} className="text-center">
+            Loading...
+          </TableCell>
+        </TableRow>
+      )}
+    </TableBody>
+  </Table>
+</div>
 export default Mods;
