@@ -43,6 +43,7 @@ type UploadMetadataPayload = {
   storage_key?: string;
   mime_type: string;
   original_filename: string;
+  image_url?: string; // ✅ NEW
 };
 
 const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
@@ -67,12 +68,11 @@ const StatusBadge = ({ status }: { status: "Active" | "Inactive" }) => (
   </span>
 );
 
-const isEncFile = (selectedFile: File) => selectedFile.name.toLowerCase().endsWith(".enc");
+const isEncFile = (selectedFile: File) =>
+  selectedFile.name.toLowerCase().endsWith(".enc");
 
 const formatFileSize = (bytes: number) => {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
+  if (bytes < 1024) return `${bytes} B`;
 
   const units = ["KB", "MB", "GB", "TB"];
   let value = bytes;
@@ -139,28 +139,20 @@ const uploadFileToStorage = async (
     await axios.post(target.upload_url, formData, {
       headers: signedHeaders,
       onUploadProgress: (event) => {
-        if (!event.total) {
-          return;
-        }
+        if (!event.total) return;
         onProgress(Math.round((event.loaded / event.total) * 100));
       },
     });
     return;
   }
 
-  const signedContentType = Object.entries(signedHeaders).find(
-    ([key]) => key.toLowerCase() === "content-type",
-  )?.[1];
-
   await axios.put(target.upload_url, file, {
     headers: {
       ...signedHeaders,
-      "Content-Type": signedContentType ?? "application/octet-stream",
+      "Content-Type": "application/octet-stream",
     },
     onUploadProgress: (event) => {
-      if (!event.total) {
-        return;
-      }
+      if (!event.total) return;
       onProgress(Math.round((event.loaded / event.total) * 100));
     },
   });
@@ -170,9 +162,11 @@ const Mods = () => {
   const [modName, setModName] = useState("");
   const [version, setVersion] = useState("");
   const [description, setDescription] = useState("");
+  const [imageUrl, setImageUrl] = useState(""); // ✅ NEW
   const [file, setFile] = useState<File | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const queryClient = useQueryClient();
 
@@ -188,60 +182,28 @@ const Mods = () => {
     setModName("");
     setVersion("");
     setDescription("");
+    setImageUrl(""); // ✅ NEW
     setFile(null);
     setUploadStage("idle");
     setUploadProgress(0);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const uploadMutation = useMutation({
     mutationFn: async () => {
-      if (!file) {
-        throw new Error("Missing file");
-      }
+      if (!file) throw new Error("Missing file");
 
-      setUploadStage("preparing");
-      setUploadProgress(5);
-
-      let target: UploadTargetResponse;
-      try {
-        const response = await api.post<UploadTargetResponse>("/admin/mod-upload-target", {
+      const target = (
+        await api.post<UploadTargetResponse>("/admin/mod-upload-target", {
           filename: file.name,
           size: file.size,
           content_type: ENCRYPTED_MIME_TYPE,
-        });
-        target = response.data;
-      } catch {
-        throw new Error("Failed to start upload");
-      }
+        })
+      ).data;
 
-      if (!target.upload_url || !target.file_url) {
-        throw new Error("Failed to start upload");
-      }
+      await uploadFileToStorage(target, file, setUploadProgress);
 
-      setUploadStage("uploading");
-      setUploadProgress(0);
-
-      try {
-        await uploadFileToStorage(target, file, setUploadProgress);
-      } catch {
-        throw new Error("Upload failed");
-      }
-
-      setUploadStage("checksum");
-      setUploadProgress(0);
-
-      let checksum: string;
-      try {
-        checksum = await calculateFileSha256(file, setUploadProgress);
-      } catch {
-        throw new Error("Checksum calculation failed");
-      }
-
-      setUploadStage("saving");
-      setUploadProgress(100);
+      const checksum = await calculateFileSha256(file, setUploadProgress);
 
       const payload: UploadMetadataPayload = {
         name: modName.trim(),
@@ -253,30 +215,24 @@ const Mods = () => {
         storage_key: target.storage_key,
         mime_type: ENCRYPTED_MIME_TYPE,
         original_filename: file.name,
+        image_url: imageUrl.trim(), // ✅ NEW
       };
 
-      try {
-        const response = await api.post("/admin/upload-mod", payload);
-        return response.data;
-      } catch {
-        throw new Error("Metadata submission failed");
-      }
+      return (await api.post("/admin/upload-mod", payload)).data;
     },
+
     onSuccess: () => {
       toast({ title: "Upload complete", description: "Mod uploaded successfully." });
       queryClient.invalidateQueries({ queryKey: ["mods"] });
       resetForm();
     },
-    onError: (error) => {
-      const message = error instanceof Error ? error.message : "Please try again.";
-      if (message === "Upload failed") {
-        toast({
-          title: "Upload to storage failed. Please try again.",
-          variant: "destructive",
-        });
-      } else {
-        toast({ title: message, description: "Please try again.", variant: "destructive" });
-      }
+
+    onError: () => {
+      toast({
+        title: "Upload failed",
+        description: "Please try again.",
+        variant: "destructive",
+      });
       setUploadStage("idle");
     },
   });
@@ -284,7 +240,13 @@ const Mods = () => {
   const handleUpload = (event: FormEvent) => {
     event.preventDefault();
 
-    const validationError = validateUpload({ modName, version, description, file });
+    const validationError = validateUpload({
+      modName,
+      version,
+      description,
+      file,
+    });
+
     if (validationError) {
       toast({
         title: validationError.title,
@@ -297,135 +259,40 @@ const Mods = () => {
     uploadMutation.mutate();
   };
 
-  const displayMods = (modsQuery.data ?? []).map((mod) => {
-    const name = (mod.name ?? mod.title ?? mod.mod_name ?? "Unnamed") as string;
-    const modVersion = (mod.version ?? mod.mod_version ?? "-") as string;
-    const statusValue = (mod.status ?? (mod.is_active ? "Active" : "Inactive")) as string;
-    const status = statusValue === "Active" || statusValue === "Inactive" ? statusValue : "Inactive";
-    const createdAt = (mod.createdAt ?? mod.created_at ?? mod.created ?? "-") as string;
-
-    return {
-      id: String(mod.id ?? mod.mod_id ?? name),
-      name,
-      version: modVersion,
-      status: status as "Active" | "Inactive",
-      createdAt,
-    };
-  });
-
-  const selectedFileName = file?.name ?? "No file selected";
-  const selectedFileSize = file ? formatFileSize(file.size) : null;
-
   return (
     <div>
-      <h1 className="text-2xl font-semibold text-foreground mb-6">Mods</h1>
+      <h1 className="text-2xl font-semibold mb-6">Mods</h1>
 
-      <div className="bg-card rounded-lg border border-border p-6 mb-8">
-        <h2 className="text-base font-medium text-foreground mb-4">Upload Mod</h2>
+      <div className="bg-card rounded-lg border p-6 mb-8">
+        <h2 className="text-base font-medium mb-4">Upload Mod</h2>
+
         <form onSubmit={handleUpload} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="modName">Mod Name</Label>
-            <Input
-              id="modName"
-              placeholder="e.g. Realistic Physics Overhaul"
-              value={modName}
-              onChange={(event) => setModName(event.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="version">Version</Label>
-            <Input
-              id="version"
-              placeholder="e.g. 1.0.0"
-              value={version}
-              onChange={(event) => setVersion(event.target.value)}
-            />
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              placeholder="Brief description of the mod..."
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              rows={3}
-            />
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <Label htmlFor="file">Encrypted File (.enc)</Label>
-            <Input
-              id="file"
-              ref={fileInputRef}
-              type="file"
-              accept=".enc"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            />
-            <p className="text-sm text-muted-foreground">
-              {selectedFileName}
-              {selectedFileSize ? ` • ${selectedFileSize}` : ""}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Upload encrypted `.enc` files only. Files larger than 2GB are rejected.
-            </p>
-          </div>
-          {uploadMutation.isPending && uploadStage !== "idle" && (
-            <div className="space-y-2 md:col-span-2">
-              <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>{stageLabels[uploadStage]}</span>
-                <span>{uploadProgress}%</span>
-              </div>
-              <Progress value={uploadProgress} />
-            </div>
-          )}
-          <div className="flex items-end">
-            <Button type="submit" className="gap-2" disabled={uploadMutation.isPending}>
-              <Upload className="h-4 w-4" />
-              {uploadMutation.isPending ? "Uploading..." : "Upload Mod"}
-            </Button>
-          </div>
-        </form>
-      </div>
 
-      <div className="bg-card rounded-lg border border-border">
-        {modsQuery.isError && (
-          <p className="px-6 pt-4 text-sm text-destructive">Failed to load mods.</p>
-        )}
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Mod Name</TableHead>
-              <TableHead>Version</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Created At</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {displayMods.map((mod) => (
-              <TableRow key={mod.id}>
-                <TableCell className="font-medium">{mod.name}</TableCell>
-                <TableCell>{mod.version}</TableCell>
-                <TableCell>
-                  <StatusBadge status={mod.status} />
-                </TableCell>
-                <TableCell className="text-muted-foreground">{mod.createdAt}</TableCell>
-              </TableRow>
-            ))}
-            {modsQuery.isLoading && (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
-                  Loading...
-                </TableCell>
-              </TableRow>
-            )}
-            {!modsQuery.isLoading && displayMods.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
-                  No mods found.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+          <Input placeholder="Mod Name" value={modName} onChange={(e) => setModName(e.target.value)} />
+          <Input placeholder="Version" value={version} onChange={(e) => setVersion(e.target.value)} />
+
+          <Textarea
+            placeholder="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="md:col-span-2"
+          />
+
+          {/* ✅ NEW FIELD */}
+          <Input
+            placeholder="Image URL"
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            className="md:col-span-2"
+          />
+
+          <Input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+
+          <Button type="submit">
+            {uploadMutation.isPending ? "Uploading..." : "Upload Mod"}
+          </Button>
+
+        </form>
       </div>
     </div>
   );
