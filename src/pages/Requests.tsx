@@ -28,6 +28,8 @@ const Requests = () => {
   const [selectedModId, setSelectedModId] = useState<string | null>(null);
   const [generatedKey, setGeneratedKey] = useState<string | null>(null);
   const [keyGenerated, setKeyGenerated] = useState(false);
+  const [search, setSearch] = useState(""); // 🔥 NEW
+
   const queryClient = useQueryClient();
 
   const requestsQuery = useQuery({
@@ -85,45 +87,79 @@ const Requests = () => {
     setKeyGenerated(false);
   };
 
-  const displayRequests = (requestsQuery.data ?? []).map((req) => {
-    const statusValue = (req.status ?? req.request_status ?? "Pending") as string;
-    const status = statusValue === "Approved" ? "Approved" : "Pending";
-    return {
-      id: String(req.id ?? req.request_id ?? req.pc_id ?? ""),
-      userName: String(req.userName ?? req.user_name ?? req.username ?? "-"),
-      phone: String(req.phone ?? req.phone_number ?? "-"),
-      pcId: String(req.pcId ?? req.pc_id ?? "-"),
-      modId: String(req.modId ?? req.mod_id ?? "-"),
-      status,
-    };
-  });
+  // 🔥 UPDATED DATA MAPPING + SEARCH
+  const displayRequests = (requestsQuery.data ?? [])
+    .map((req) => {
+      const statusValue = (req.status ?? "Pending") as string;
+      const status = statusValue === "Approved" ? "Approved" : "Pending";
+
+      return {
+        id: String(req.id ?? ""),
+        userName: String(req.user_name ?? "-"),
+        phone: String(req.phone ?? "-"),
+        pcId: String(req.pc_id ?? "-"),
+
+        // 🔥 NEW FIELDS
+        modName: String(req.mod_name ?? "-"),
+        description: String(req.description ?? ""),
+
+        // IMPORTANT → still needed for API
+        modId: String(req.mod_id ?? ""),
+
+        status,
+      };
+    })
+    .filter((req) =>
+      req.description.toLowerCase().includes(search.toLowerCase())
+    );
 
   return (
     <div>
       <h1 className="text-2xl font-semibold text-foreground mb-6">Mod Requests</h1>
 
       <div className="bg-card rounded-lg border border-border">
+
+        {/* 🔍 SEARCH BAR */}
+        <div className="p-4">
+          <input
+            type="text"
+            placeholder="Search by description..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full p-2 border rounded-md"
+          />
+        </div>
+
         {requestsQuery.isError && (
           <p className="px-6 pt-4 text-sm text-destructive">Failed to load requests.</p>
         )}
+
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>User Name</TableHead>
               <TableHead>Phone Number</TableHead>
               <TableHead>PC ID</TableHead>
-              <TableHead>Mod ID</TableHead>
+              <TableHead>Mod Name</TableHead> {/* 🔥 UPDATED */}
+              <TableHead>Description</TableHead> {/* 🔥 NEW */}
               <TableHead>Status</TableHead>
               <TableHead>Action</TableHead>
             </TableRow>
           </TableHeader>
+
           <TableBody>
             {displayRequests.map((req) => (
               <TableRow key={req.id}>
                 <TableCell className="font-medium">{req.userName}</TableCell>
                 <TableCell className="text-muted-foreground">{req.phone}</TableCell>
                 <TableCell className="font-mono text-sm">{req.pcId}</TableCell>
-                <TableCell className="font-mono text-sm">{req.modId}</TableCell>
+
+                {/* 🔥 NEW UI */}
+                <TableCell>{req.modName}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {req.description}
+                </TableCell>
+
                 <TableCell>
                   <span
                     className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
@@ -135,6 +171,7 @@ const Requests = () => {
                     {req.status}
                   </span>
                 </TableCell>
+
                 <TableCell>
                   {req.status === "Pending" ? (
                     <Button size="sm" onClick={() => openModal(req.modId)}>
@@ -146,16 +183,18 @@ const Requests = () => {
                 </TableCell>
               </TableRow>
             ))}
+
             {requestsQuery.isLoading && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             )}
+
             {!requestsQuery.isLoading && displayRequests.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   No requests found.
                 </TableCell>
               </TableRow>
@@ -164,7 +203,7 @@ const Requests = () => {
         </Table>
       </div>
 
-      {/* Generate Key Modal */}
+      {/* MODAL */}
       <Dialog open={modalOpen} onOpenChange={(open) => !open && handleClose()}>
         <DialogContent className="sm:max-w-md">
           {!keyGenerated ? (
@@ -194,7 +233,7 @@ const Requests = () => {
                   <code className="flex-1 text-lg font-mono font-bold text-key-fg tracking-wider">
                     {generatedKey}
                   </code>
-                  <Button variant="ghost" size="sm" onClick={handleCopy} className="shrink-0">
+                  <Button variant="ghost" size="sm" onClick={handleCopy}>
                     <Copy className="h-4 w-4" />
                   </Button>
                 </div>
